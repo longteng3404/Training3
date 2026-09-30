@@ -401,6 +401,7 @@ body.present #hud{display:block}
 #toast{position:fixed;top:70px;left:50%;transform:translate(-50%,-10px);background:var(--ink);color:var(--bg);
   padding:8px 18px;border-radius:20px;font-size:14px;opacity:0;transition:.3s;pointer-events:none;z-index:60}
 #toast.show{opacity:1;transform:translate(-50%,0)}
+body.present #toast{top:auto;bottom:72px}
 @media (prefers-reduced-motion:reduce){*{transition-duration:.01s!important;animation-duration:.01s!important}}
 </style>
 </head>
@@ -594,7 +595,7 @@ body.present #hud{display:block}
   <h3>即時文字雲（QR code 互動）</h3>
   <p>在文字雲頁的面板勾「即時收集」，貼上互動後台網址（Google 試算表的 Apps Script 部署網址），簡報時畫面會出現 QR code，觀眾用手機掃描就能一直輸入。播放分四步：① 標題和 QR code，觀眾的回覆會一則一則飄出來；② 最多人寫的詞（同票一起出現）；③ 第二多的；④ 其他全部。按 ↓、→、空白鍵或畫面下方的 ↓ 按鈕前進。在面板的「觀眾選項」每行填一個選項，觀眾的手機頁就會出現可以複選的按鈕（大綱裡寫成 <b>* 選項</b>）；取消勾選「觀眾也可以自己輸入其他答案」，就只能從選項裡選。選項會自動同步到後台，需要第 2 版以上的後台程式碼。詞上按右鍵可以隱藏不適合的回答（只影響畫面）。大綱寫法：<b>@文字雲 題目 [即時] #場次代碼</b>，後台網址寫在 <b>@互動後台 網址</b>。</p>
   <h3>分享連結與網址參數</h3>
-  <p>工具放到網路上（例如 GitHub Pages）之後，按工具列的「分享連結」，內容會壓縮放進連結裡，不經過任何伺服器；「簡報連結」打開就會準備進入簡報，適合貼在 Canva 的按鈕或文字上。也可以把 .txt 放在同一個網站，用 <b>?file=檔名.txt</b> 開啟，再加上 <b>&amp;present</b> 直接進入簡報。</p>
+  <p>工具放到網路上（例如 GitHub Pages）之後，按工具列的「分享連結」，內容會壓縮放進連結裡，不經過任何伺服器；「簡報連結」打開就直接是簡報畫面（第一次按鍵或點畫面時進入全螢幕），適合貼在 Canva 的按鈕或文字上。也可以把 .txt 放在同一個網站，用 <b>?file=檔名.txt</b> 開啟，再加上 <b>&amp;present</b> 直接進入簡報。</p>
   <h3>左右跳頁</h3>
   <p>畫面左右兩側淡淡的 ‹ › 箭頭，可以直接跳到上一頁或下一頁；簡報時會跳到那一頁的開頭。</p>
   <h3>舊流程變成新流程（變形）</h3>
@@ -3567,7 +3568,21 @@ async function initFromURL(){
   }catch(e){toast('連結裡的內容載入失敗：'+e.message)}
   if(text==null){renderWelcome();return}
   openDoc(text,name);
-  if(present){$('#startName').textContent=name.replace(/\.txt$/,'');$('#startBox').hidden=false;setTimeout(()=>$('#startGo').focus(),50)}
+  if(present) autoPresent();
+}
+/* 簡報連結：打開就直接是簡報畫面；第一次按鍵或點畫面時順便進入全螢幕 */
+function autoPresent(){
+  requestAnimationFrame(()=>{
+    startPresent();
+    const goFull=()=>{
+      document.removeEventListener('pointerdown',goFull,true); document.removeEventListener('keydown',goFull,true);
+      if(mode==='present'&&!document.fullscreenElement&&document.documentElement.requestFullscreen){
+        const p=document.documentElement.requestFullscreen(); if(p) p.catch(()=>{});
+      }
+    };
+    document.addEventListener('pointerdown',goFull,true); document.addEventListener('keydown',goFull,true);
+    setTimeout(()=>{if(mode==='present'&&!document.fullscreenElement)toast('按任一鍵或點一下畫面，就會進入全螢幕')},600);
+  });
 }
 $('#startGo').onclick=()=>{$('#startBox').hidden=true;startPresent()};
 document.addEventListener('keydown',e=>{if(!$('#startBox').hidden&&e.key==='Escape'){$('#startBox').hidden=true}},true);
