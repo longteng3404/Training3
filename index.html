@@ -970,7 +970,7 @@ body.present #backBtn.show{display:block}
 </main>
 
 <div id="hud"></div>
-<div id="hint">→ 或空白鍵：下一步　← 上一步　點節點：展開或收合　E：展開下一層　O：看全貌　A：完整展示　Esc：離開</div>
+<div id="hint">→ 或空白鍵：下一步　← 上一步　點節點：展開或收合　E：展開下一層　Shift+E：一路長出全部　O：看全貌　A：完整展示　Esc：離開</div>
 <button id="fullBtn" title="完整展示整張心智圖（A）">⤢ 完整展示</button>
 <button id="backBtn" title="回到按按鈕之前的那一頁">↩ 返回</button>
 <div id="overview" hidden><div class="ovbox"><div class="ovhead"><b>跳到哪一頁？</b><span>點縮圖跳過去・按 G 或 Esc 關閉</span></div><div class="ovgrid"></div></div></div>
@@ -1179,8 +1179,9 @@ const OPTS=[
   ['stepnum','步驟編號','流程步驟編號',['圓標','大數字','大數字1']],
   ['cycle','循環','簡報結尾的循環箭頭',['顯示','不顯示']],
   ['morph','變形','新舊流程轉換（簡報時）',['取代','並排']],
+  ['dim','淡化','簡報時把其他分支變淡',['開','變形時不淡化','關']],
 ];
-const DEF_OPT={line:'實線',shape:'曲線',border:'實線',form:'色條',radius:'小圓角',motion:'生動',done:'勾勾',stepnum:'圓標',cycle:'顯示',morph:'取代'};
+const DEF_OPT={line:'實線',shape:'曲線',border:'實線',form:'色條',radius:'小圓角',motion:'生動',done:'勾勾',stepnum:'圓標',cycle:'顯示',morph:'取代',dim:'開'};
 const THEMES=[
   {name:'俐落色條',set:{line:'實線',shape:'曲線',border:'實線',form:'色條',radius:'小圓角'}},
   {name:'清新填色',set:{line:'實線',shape:'折線',border:'實線',form:'填色',radius:'小圓角'}},
@@ -2242,13 +2243,21 @@ function wordAct(c,t,d){
 
 /* ================= 版面 ================= */
 /* 簡報時：底下還沒有任何節點出現的分支先收起來排版，展開到哪裡就只排到哪裡，避免一開始距離拉得很開 */
-const kids=n=>mode==='present'?((!P||!P.vis||n.children.some(c=>P.vis.has(c.id)))?n.children:[]):(!collapsed.has(n.key)?n.children:[]);
+const kids=n=>{
+  if(mode!=='present') return !collapsed.has(n.key)?n.children:[];
+  if(!P||!P.vis) return n.children;
+  if(!n.children.some(c=>P.vis.has(c.id))) return [];
+  /* 已經變形成新版本的舊節點不再佔位置 */
+  return P.replaced&&P.replaced.size?n.children.filter(c=>!(P.replaced.has(c.id)&&!P.vis.has(c.id))):n.children;
+};
 const sumsOf=n=>kids(n).length?n.sums:[];
 const descOpen=n=>n.desc.length>0&&(mode==='present'?!!(P&&P.focus===n):sel===n);
 const picOpen=n=>n.imgs.length>0&&openImgs.has(n.key);
 const LABPAD=20, RELBAND=64;
 const labWOf=list=>list.reduce((a,k)=>Math.max(a,k.lab?k.labW+LABPAD:0),0);
-const railTop=k=>Math.max(k.lab?k.labH:0,k.numH||0);
+/* 簡報時，有「變成新流程／回到舊流程」按鈕的節點上方要多留按鈕的高度，才不會壓到上一個節點 */
+const mbtnRoom=k=>{if(mode!=='present'||!(k.morphTo||k.morphFrom)||(P&&P.full))return 0;if(k._mbH==null){const fs=parseFloat(getComputedStyle(k.el).fontSize)||20;k._mbH=Math.round(fs*1.15+fs*.56+16)}return k._mbH};
+const railTop=k=>Math.max(k.lab?k.labH:0,k.numH||0,mbtnRoom(k));
 const overlapOf=k=>(mode==='present'&&!(P&&P.full)&&style.morph!=='並排'&&k.morphFrom&&k.parent&&k.parent!==root&&!k.parent.flow)?k.morphFrom:null;
 function sumExtra(list,sums){
   let w=0,h=0;
@@ -2482,7 +2491,10 @@ function linkSpec(n){
     return {kind:'poly',pts:[[sx,p.y+p.h],[sx,n.cy],inn]};
   }
   if(p.vflow){
-    const st=stepsOf(p), sx=p.dir>0?p.x+16:p.x+p.w-16, i=st.indexOf(n);
+    const st=stepsOf(p), sx=p.dir>0?p.x+16:p.x+p.w-16;
+    /* 簡報時前面的步驟被換掉（變形）或還沒出現，就由第一個看得到的步驟畫出主幹線 */
+    const pres=mode==='present'&&P&&P.vis, live=pres?st.filter(c=>P.vis.has(c.id)&&!(P.replaced&&P.replaced.has(c.id))):st;
+    const i=pres&&live[0]===n?0:st.indexOf(n);
     const tick={kind:'poly',pts:[[sx,n.cy],inn]};
     if(i>0){
       const pr=st[i-1], c=contOf(pr);
@@ -2854,26 +2866,55 @@ function revealBranch(n){
   set.forEach(d=>{if(d.morphFrom&&set.has(d.morphFrom))applyMorph(d)});
   relEls.forEach(R=>{if(P.vis.has(R.a.id)&&P.vis.has(R.b.id))P.relShown.add(R.k)});
   P.focus=n; P.fr=frame([...set].filter(d=>P.vis.has(d.id)));
-  steps.forEach((st,i)=>{const m=st.n||(st.R&&st.R.a);if(m&&set.has(m)&&i>idx)idx=i});
+  const old=idx; steps.forEach((st,i)=>{const m=st.n||(st.R&&st.R.a);if(m&&set.has(m)&&i>idx)idx=i}); idx=capAtMorph(old,idx);
   renderP();
 }
+/* 一次展開很多內容時，播放位置不能越過還沒播的變形，否則之後按方向鍵就看不到變形 */
+function capAtMorph(from,to){
+  for(let i=from+1;i<=to;i++){const st=steps[i];if(st&&st.t==='morph'&&!P.vis.has(st.n.id))return i-1}
+  return to;
+}
 /* 只展開下一層：有焦點就展開那個節點；沒有焦點就把畫面上每個末端節點都往下長一層 */
-function revealNext(n){
-  if(fullSaved||P.cloud||P.slide||!root) return;
+function revealNext(n,deep=false,quiet=false){
+  if(fullSaved||P.cloud||P.slide||!root) return false;
   const canShow=c=>!P.vis.has(c.id)&&!c.morphFrom;
   let targets;
-  if(n) targets=[n];
-  else targets=visibleNodes().filter(d=>allKids(d).length&&!allKids(d).some(c=>P.vis.has(c.id)));
+  if(n&&!deep) targets=[n];
+  else{const scope=n?subtree(n):flat;targets=scope.filter(d=>P.vis.has(d.id)&&allKids(d).length&&!allKids(d).some(c=>P.vis.has(c.id)))}
   const add=[]; targets.forEach(t=>allKids(t).forEach(c=>{if(canShow(c))add.push(c)}));
-  if(!add.length){toast(n?'這個節點底下已經全部展開':'畫面上的節點都已經展開到底了');return}
-  closeCard(); snap(); P.cycle=false; P.relOn=new Set(); P.cloud=null;
+  if(!add.length){if(!quiet)toast(n?'這個節點底下已經全部展開':'畫面上的節點都已經展開到底了');return false}
+  closeCard(); if(!quiet) snap(); P.cycle=false; P.relOn=new Set(); P.cloud=null;
   if(n) showAnc(n);
   add.forEach(c=>P.vis.add(c.id));
   relEls.forEach(R=>{if(P.vis.has(R.a.id)&&P.vis.has(R.b.id))P.relShown.add(R.k)});
-  if(n){P.focus=n;P.fr=frame([n,...allKids(n).filter(c=>P.vis.has(c.id))]);const i=steps.findIndex(st=>st.t==='reveal'&&st.n===n);if(i>idx)idx=i}
+  if(n&&!deep){P.focus=n;P.fr=frame([n,...allKids(n).filter(c=>P.vis.has(c.id))]);const i=steps.findIndex(st=>st.t==='reveal'&&st.n===n);if(i>idx)idx=i}
+  else if(n){P.focus=n;P.fr=frame(subtree(n).filter(d=>P.vis.has(d.id)),1.4,40)}
   else{P.focus=null;P.fr=frame(visibleNodes(),1.2)}
-  renderP();
+  renderP(); return true;
 }
+/* 由內向外一層一層長出全部：按一下自動播完，播放中按任何鍵或點一下就停在當下 */
+let growTimer=null;
+function stopGrow(){if(growTimer){clearTimeout(growTimer);growTimer=null;return true}return false}
+function growAll(n){
+  stopGrow(); if(fullSaved||P.cloud||P.slide||!root) return;
+  let first=true;
+  const tick=()=>{
+    if(!first){P.focus=n||null} 
+    const ok=revealNext(n,true,!first);
+    if(first&&!ok) return; first=false;
+    if(!ok){growTimer=null;
+      const old=idx;
+      if(n){const set=new Set(subtree(n));steps.forEach((st,i)=>{const m=st.n||(st.R&&st.R.a);if(m&&set.has(m)&&i>idx)idx=i})}
+      else{const last=steps.reduce((a,st,i)=>st.m===P.map&&st.t!=='cycle'&&st.t!=='final'?i:a,idx);idx=Math.max(idx,last)}
+      idx=capAtMorph(old,idx);
+      return}
+    const fresh=flat.filter(d=>P.vis.has(d.id)).length;
+    growTimer=setTimeout(tick,Math.min(1600,900+fresh*2));
+  };
+  tick();
+}
+document.addEventListener('keydown',e=>{if(mode==='present'&&growTimer&&!(e.key==='E'||e.key==='e')){stopGrow()}},true);
+document.addEventListener('pointerdown',()=>{if(mode==='present')stopGrow()},true);
 function hideBranch(n){
   closeCard(); snap(); P.relOn=new Set();
   subtree(n).slice(1).forEach(d=>P.vis.delete(d.id));
@@ -2914,8 +2955,8 @@ stage.addEventListener('contextmenu',e=>{
   if(mode==='present'){
     if(fullSaved){showCtx(x,y,[['返回簡報',exitFull,true,'A']]);return}
     if(n&&P.vis.has(n.id)) showCtx(x,y,[['完整展示這個分支（看完返回）',()=>enterFull(n),allKids(n).length>0],['完整展示整張心智圖',()=>enterFull(null),true,'A'],'-',
-      ['只展開下一層',()=>revealNext(n),allKids(n).some(c=>!P.vis.has(c.id)),'E'],['展開這個分支全部，接著往下播',()=>revealBranch(n),allKids(n).length>0,'Shift+E'],['收合這個分支',()=>hideBranch(n),allKids(n).some(c=>P.vis.has(c.id)),'/'],'-',['看全貌',overviewP,true,'O']]);
-    else showCtx(x,y,[['每個分支都再展開一層',()=>revealNext(null),true,'E'],'-',['完整展示整張心智圖',()=>enterFull(null),true,'A'],['看全貌',overviewP,true,'O']]);
+      ['只展開下一層',()=>revealNext(n),allKids(n).some(c=>!P.vis.has(c.id)),'E'],['由內向外長出這個分支全部',()=>growAll(n),allKids(n).some(c=>!P.vis.has(c.id)),'Shift+E'],['展開這個分支全部，接著往下播',()=>revealBranch(n),allKids(n).length>0],['收合這個分支',()=>hideBranch(n),allKids(n).some(c=>P.vis.has(c.id)),'/'],'-',['看全貌',overviewP,true,'O']]);
+    else showCtx(x,y,[['每個分支都再展開一層',()=>revealNext(null),true,'E'],['由內向外長出整張圖',()=>growAll(null),true,'Shift+E'],'-',['完整展示整張心智圖',()=>enterFull(null),true,'A'],['看全貌',overviewP,true,'O']]);
     return;
   }
   if(n){
@@ -5110,6 +5151,9 @@ function renderP(anim=true){
   const lastPop=fresh.length?Math.max(0,...dl.values()):0;
   const popStep=Math.min(.12,D*.2/Math.max(newCount,1));
   let order=0; const br=branchOf(P.focus);
+  /* 淡化設定：關掉，或只在新舊流程變形時不淡化 */
+  const inMorph=!!(MN||(P.focus&&P.focus.morphFrom)||P.fade.size);
+  const noDim=style.dim==='關'||(style.dim==='變形時不淡化'&&inMorph);
   flat.forEach(n=>{
     const v=P.vis.has(n.id), isNew=v&&!prevVis.has(n.id);
     let delay=isNew?(dl.get(n)||0):0; if(isNew) order++;
@@ -5122,6 +5166,7 @@ function renderP(anim=true){
     let dim=false,faint=false;
     if(n!==root){const b=branchOf(n);if(P.cycle)faint=n.depth>=2;else if(br)dim=b!==br;else dim=P.done.has(b.id)}
     if(P.fade.has(n.id)) dim=true;
+    if(noDim) dim=false;
     const el=n.el; el.style.transitionDelay=delay+'s';
     el.classList.toggle('swap',swap);
     const Lk=linkEls[n.id]; if(Lk) Lk.g.classList.toggle('swap',swap);
@@ -5216,6 +5261,7 @@ function startPresent(from){
   hint.classList.add('show'); setTimeout(()=>hint.classList.remove('show'),5000);
 }
 function stopPresent(){
+  stopGrow();
   fullSaved=null; $('#fullBtn').classList.remove('show','on');
   mode='edit'; world.style.transitionDuration=''; world.style.transitionDelay=''; world.style.transitionTimingFunction='';
   if(maps[editMap]&&maps[editMap]!==root){activeMap=editMap;root=maps[editMap];renderRoot()} document.body.classList.remove('present'); closeCard(); hint.classList.remove('show');
@@ -5330,7 +5376,7 @@ document.addEventListener('keydown',e=>{
     if(['ArrowRight','ArrowDown',' ','PageDown','Enter'].includes(k)){e.preventDefault();nextP()}
     else if(['ArrowLeft','ArrowUp','PageUp','Backspace'].includes(k)){e.preventDefault();prevP()}
     else if(lk==='o'){if(!fullSaved)overviewP()}
-    else if(lk==='e'&&!P.cloud&&!P.slide){const f=P.focus&&P.vis.has(P.focus.id)?P.focus:null;e.shiftKey?(f?revealBranch(f):enterFull(null)):revealNext(f)}
+    else if(lk==='e'&&!P.cloud&&!P.slide){const f=P.focus&&P.vis.has(P.focus.id)?P.focus:null;if(e.shiftKey){if(!stopGrow())growAll(f)}else{stopGrow();revealNext(f)}}
     else if(k==='/'&&P.focus&&!P.cloud&&!P.slide){hideBranch(P.focus)}
     else if(lk==='a') toggleFull();
     else if(k==='Escape'||lk==='q'){card.open?closeCard():fullSaved?exitFull():stopPresent()}
