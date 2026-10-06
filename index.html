@@ -759,6 +759,8 @@ body.present #backBtn.show{display:block}
         <kbd>方向鍵</kbd> 移動選取<br>
         <kbd>Alt</kbd>+<kbd>方向鍵</kbd> 調整順序<br>
         <kbd>/</kbd> 收合或展開<br>
+        <kbd>E</kbd> 只展開下一層（沒選節點時：整張圖再展開一層）<br>
+        <kbd>Shift</kbd>+<kbd>E</kbd> 展開底下全部<br>
         <b>右鍵</b>：展開底下全部內容、收合等選單<br>
         <kbd>Shift</kbd>+點選：多選同層節點<br>
         <kbd>Ctrl</kbd>+<kbd>F</kbd> 搜尋全部頁面（Enter 跳下一筆）<br>
@@ -968,7 +970,7 @@ body.present #backBtn.show{display:block}
 </main>
 
 <div id="hud"></div>
-<div id="hint">→ 或空白鍵：下一步　← 上一步　點節點：展開或收合　O：看全貌　A：完整展示　Esc：離開</div>
+<div id="hint">→ 或空白鍵：下一步　← 上一步　點節點：展開或收合　E：展開下一層　O：看全貌　A：完整展示　Esc：離開</div>
 <button id="fullBtn" title="完整展示整張心智圖（A）">⤢ 完整展示</button>
 <button id="backBtn" title="回到按按鈕之前的那一頁">↩ 返回</button>
 <div id="overview" hidden><div class="ovbox"><div class="ovhead"><b>跳到哪一頁？</b><span>點縮圖跳過去・按 G 或 Esc 關閉</span></div><div class="ovgrid"></div></div></div>
@@ -2812,6 +2814,13 @@ function expandOneUnder(n){
   collapsed.delete(n.key); allKids(n).forEach(c=>{if(allKids(c).length)collapsed.add(c.key)});
   store('mm-collapsed',[...collapsed]); layout(true);
 }
+/* 沒有選取時按 E：整張圖目前收著的分支都往下展開一層 */
+function expandOneLevelAll(){
+  const front=flat.filter(n=>n.placed&&collapsed.has(n.key));
+  if(!front.length){toast('已經全部展開了');return}
+  front.forEach(n=>{collapsed.delete(n.key);allKids(n).forEach(c=>{if(allKids(c).length)collapsed.add(c.key)})});
+  store('mm-collapsed',[...collapsed]); layout(true); setTimeout(()=>fitAll(true),20);
+}
 function collapseNode(n){collapsed.add(n.key);store('mm-collapsed',[...collapsed]);layout(true)}
 function doMorph(N){
   applyMorph(N); P.focus=N;
@@ -2846,6 +2855,23 @@ function revealBranch(n){
   relEls.forEach(R=>{if(P.vis.has(R.a.id)&&P.vis.has(R.b.id))P.relShown.add(R.k)});
   P.focus=n; P.fr=frame([...set].filter(d=>P.vis.has(d.id)));
   steps.forEach((st,i)=>{const m=st.n||(st.R&&st.R.a);if(m&&set.has(m)&&i>idx)idx=i});
+  renderP();
+}
+/* 只展開下一層：有焦點就展開那個節點；沒有焦點就把畫面上每個末端節點都往下長一層 */
+function revealNext(n){
+  if(fullSaved||P.cloud||P.slide||!root) return;
+  const canShow=c=>!P.vis.has(c.id)&&!c.morphFrom;
+  let targets;
+  if(n) targets=[n];
+  else targets=visibleNodes().filter(d=>allKids(d).length&&!allKids(d).some(c=>P.vis.has(c.id)));
+  const add=[]; targets.forEach(t=>allKids(t).forEach(c=>{if(canShow(c))add.push(c)}));
+  if(!add.length){toast(n?'這個節點底下已經全部展開':'畫面上的節點都已經展開到底了');return}
+  closeCard(); snap(); P.cycle=false; P.relOn=new Set(); P.cloud=null;
+  if(n) showAnc(n);
+  add.forEach(c=>P.vis.add(c.id));
+  relEls.forEach(R=>{if(P.vis.has(R.a.id)&&P.vis.has(R.b.id))P.relShown.add(R.k)});
+  if(n){P.focus=n;P.fr=frame([n,...allKids(n).filter(c=>P.vis.has(c.id))]);const i=steps.findIndex(st=>st.t==='reveal'&&st.n===n);if(i>idx)idx=i}
+  else{P.focus=null;P.fr=frame(visibleNodes(),1.2)}
   renderP();
 }
 function hideBranch(n){
@@ -2888,14 +2914,14 @@ stage.addEventListener('contextmenu',e=>{
   if(mode==='present'){
     if(fullSaved){showCtx(x,y,[['返回簡報',exitFull,true,'A']]);return}
     if(n&&P.vis.has(n.id)) showCtx(x,y,[['完整展示這個分支（看完返回）',()=>enterFull(n),allKids(n).length>0],['完整展示整張心智圖',()=>enterFull(null),true,'A'],'-',
-      ['展開這個分支，接著往下播',()=>revealBranch(n),allKids(n).length>0],['收合這個分支',()=>hideBranch(n),allKids(n).some(c=>P.vis.has(c.id))],'-',['看全貌',overviewP,true,'O']]);
-    else showCtx(x,y,[['完整展示整張心智圖',()=>enterFull(null),true,'A'],['看全貌',overviewP,true,'O']]);
+      ['只展開下一層',()=>revealNext(n),allKids(n).some(c=>!P.vis.has(c.id)),'E'],['展開這個分支全部，接著往下播',()=>revealBranch(n),allKids(n).length>0,'Shift+E'],['收合這個分支',()=>hideBranch(n),allKids(n).some(c=>P.vis.has(c.id)),'/'],'-',['看全貌',overviewP,true,'O']]);
+    else showCtx(x,y,[['每個分支都再展開一層',()=>revealNext(null),true,'E'],'-',['完整展示整張心智圖',()=>enterFull(null),true,'A'],['看全貌',overviewP,true,'O']]);
     return;
   }
   if(n){
     if(sel!==n) select(n);
     const has=allKids(n).length>0;
-    showCtx(x,y,[['展開底下全部內容',()=>expandAllUnder(n),has],['只展開下一層',()=>expandOneUnder(n),has],['收合',()=>collapseNode(n),has&&n.depth>0&&!collapsed.has(n.key),'/'],'-',
+    showCtx(x,y,[['展開底下全部內容',()=>expandAllUnder(n),has,'Shift+E'],['只展開下一層',()=>expandOneUnder(n),has,'E'],['收合',()=>collapseNode(n),has&&n.depth>0&&!collapsed.has(n.key),'/'],'-',
       ['新增下一層',()=>addChild(n),true,'Tab'],['新增同層',()=>addSibling(n),!!n.parent,'Enter'],'-',
       [n.parent?'複製這個分支':'複製這張心智圖',()=>dupBranch(n,false),!n.summary,'Ctrl+D'],
       ['複製成新版本（簡報時變形）',()=>dupBranch(n,true),!!n.parent&&!n.summary],
@@ -5304,6 +5330,8 @@ document.addEventListener('keydown',e=>{
     if(['ArrowRight','ArrowDown',' ','PageDown','Enter'].includes(k)){e.preventDefault();nextP()}
     else if(['ArrowLeft','ArrowUp','PageUp','Backspace'].includes(k)){e.preventDefault();prevP()}
     else if(lk==='o'){if(!fullSaved)overviewP()}
+    else if(lk==='e'&&!P.cloud&&!P.slide){const f=P.focus&&P.vis.has(P.focus.id)?P.focus:null;e.shiftKey?(f?revealBranch(f):enterFull(null)):revealNext(f)}
+    else if(k==='/'&&P.focus&&!P.cloud&&!P.slide){hideBranch(P.focus)}
     else if(lk==='a') toggleFull();
     else if(k==='Escape'||lk==='q'){card.open?closeCard():fullSaved?exitFull():stopPresent()}
     return;
@@ -5326,6 +5354,7 @@ document.addEventListener('keydown',e=>{
   if(viewCloud!=null&&k!=='F5') return;
   if(k==='F5'&&e.shiftKey){e.preventDefault();startPresent();return}
   const n=sel;
+  if(k.toLowerCase()==='e'&&root&&!e.altKey){e.preventDefault();if(n&&allKids(n).length){e.shiftKey?expandAllUnder(n):expandOneUnder(n)}else if(!n){e.shiftKey?$('#btnExpand').onclick():expandOneLevelAll()}return}
   if(!n){if(k.startsWith('Arrow')&&root){e.preventDefault();select(root,{reveal:true})}return}
   if(k==='Enter'){e.preventDefault();addSibling(n)}
   else if(k==='Tab'){e.preventDefault();e.shiftKey?promote(n):addChild(n)}
