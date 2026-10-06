@@ -414,6 +414,7 @@ body.steady #world.anim{transition-timing-function:cubic-bezier(.65,0,.35,1)}
 .lg.dim,.rg.dim{--c:color-mix(in srgb,var(--c0) 28%,var(--bg))}
 .lg.faint,.rg.faint{--c:color-mix(in srgb,var(--c0) 9%,var(--bg))}
 .node.off{opacity:0;transform:scale(.8);pointer-events:none}
+#world.snapnow .node,#world.snapnow .lg,#world.snapnow .lg path,#world.snapnow .rg,#world.snapnow .dsc,#world.snapnow .pic,#world.snapnow .dl{transition:none!important}
 .lg.off{opacity:0}.lg.off path{stroke-dashoffset:1}
 #hud{position:fixed;right:22px;bottom:16px;font-size:13px;color:var(--muted);display:none}
 body.present #hud{display:block}
@@ -1448,7 +1449,7 @@ function morphPairs(N){
   olds.forEach(d=>{const k=key(d,O);if(!pool.has(k))pool.set(k,[]);pool.get(k).push(d)});
   const used=new Set(), out=[], got=new Set();
   subtree(N).forEach(d=>{const l=pool.get(key(d,N)), o=l&&l.find(x=>!used.has(x));if(o){used.add(o);got.add(d);out.push([d,o])}});
-  subtree(N).forEach(d=>{if(got.has(d))return;const o=olds.find(x=>!used.has(x)&&plain(x.title)===plain(d.title));if(o){used.add(o);got.add(d);out.push([d,o])}});
+  subtree(N).forEach(d=>{if(got.has(d))return;const o=olds.find(x=>!used.has(x)&&x.depth-O.depth===d.depth-N.depth&&plain(x.title)===plain(d.title));if(o){used.add(o);got.add(d);out.push([d,o])}});
   /* 前面的兄弟節點都有配對到，才讓它直接滑過來；否則會出現「② 先出現、① 後出現」 */
   const keep=new Set([N]);
   subtree(N).forEach(d=>{
@@ -2238,7 +2239,8 @@ function wordAct(c,t,d){
 }
 
 /* ================= 版面 ================= */
-const kids=n=>(mode==='present'||!collapsed.has(n.key))?n.children:[];
+/* 簡報時：底下還沒有任何節點出現的分支先收起來排版，展開到哪裡就只排到哪裡，避免一開始距離拉得很開 */
+const kids=n=>mode==='present'?((!P||!P.vis||n.children.some(c=>P.vis.has(c.id)))?n.children:[]):(!collapsed.has(n.key)?n.children:[]);
 const sumsOf=n=>kids(n).length?n.sums:[];
 const descOpen=n=>n.desc.length>0&&(mode==='present'?!!(P&&P.focus===n):sel===n);
 const picOpen=n=>n.imgs.length>0&&openImgs.has(n.key);
@@ -2390,6 +2392,11 @@ function layout(animate=true,tw=null){
   side(ks.slice(0,nR),rootW/2+GXR,1);
   side(ks.slice(nR).reverse(),-(rootW/2+GXR),-1);
   }
+  /* 簡報時還沒排進來的節點，先疊在最近的已排節點中心；之後出現時會從那裡長出來 */
+  if(mode==='present') flat.forEach(n=>{
+    if(n.placed) return; let a=n.parent; while(a&&!a.placed) a=a.parent; if(!a) return;
+    n.dir=a.dir||1; n.x=a.x+a.w/2-n.w/2; n.y=a.y+a.h/2-n.h/2; n.dX=n.x; n.dY=n.y; n.pX=n.x; n.pY=n.y; n.placed=true;
+  });
   flat.forEach(n=>{
     n.T={x:n.x,y:n.y,dX:n.dX,dY:n.dY,pX:n.pX,pY:n.pY};
     n.el.classList.toggle('gone',!n.placed);
@@ -5047,6 +5054,8 @@ function renderP(anim=true){
   if(!cl&&maps[P.map]&&maps[P.map]!==root){
     activeMap=P.map; root=maps[P.map]; renderRoot();
     prevVis=new Set(); cycleDrawn=false; cycG.innerHTML='';
+    /* 剛建好的節點先全部藏起來（不播淡出），避免換到這張圖時其他節點閃一下 */
+    snapHide();
   }
   if(!root){hud.textContent=`${idx+1} / ${steps.length}`;return}
   /* 變形：新流程的節點從對應的舊節點位置出發，滑到自己的位置 */
@@ -5140,6 +5149,11 @@ function renderP(anim=true){
   const fb=$('#fullBtn'); fb.classList.toggle('show',!P.cloud); fb.classList.toggle('on',!!fullSaved);
   fb.textContent=fullSaved?'↩ 返回簡報':'⤢ 完整展示';
 }
+function snapHide(){
+  world.classList.add('snapnow');
+  flat.forEach(n=>n.el.classList.add('off')); Object.values(linkEls).forEach(L=>L.g.classList.add('off')); relEls.forEach(R=>R.g.classList.add('off'));
+  void world.offsetWidth; world.classList.remove('snapnow');
+}
 function drawCycle(on){
   if(on===cycleDrawn) return; cycleDrawn=on; cycG.innerHTML='';
   if(!on||root.children.length<2) return;
@@ -5169,7 +5183,9 @@ function startPresent(from){
   P=newP(); cloudShown=null; simulating=!!steps[idx].pre; doStep(steps[idx]); simulating=false; runPre();
   prevVis=new Set(root?[root.id]:[]);
   document.body.classList.add('present');
+  snapHide(); world.classList.add('snapnow');
   renderP(false);
+  void world.offsetWidth; requestAnimationFrame(()=>world.classList.remove('snapnow'));
   setTimeout(()=>{world.classList.remove('anim');fitBox(grow(bbox(P.fr.list),P.fr.pad),P.fr.maxS)},80);
   hint.classList.add('show'); setTimeout(()=>hint.classList.remove('show'),5000);
 }
