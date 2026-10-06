@@ -970,7 +970,7 @@ body.present #backBtn.show{display:block}
 </main>
 
 <div id="hud"></div>
-<div id="hint">→ 或空白鍵：下一步　← 上一步　點節點：展開或收合　E：展開下一層　Shift+E：一路長出全部　O：看全貌　A：完整展示　Esc：離開</div>
+<div id="hint">→ 或空白鍵：下一步　← 上一步　點節點：展開或收合　E：展開下一層　N：逐一導覽下一個節點　Shift+N：往中心收一層　Shift+E：一路長出全部　O：看全貌　＋／－：縮放　C：回到中心　A：完整展示　Esc：離開</div>
 <button id="fullBtn" title="完整展示整張心智圖（A）">⤢ 完整展示</button>
 <button id="backBtn" title="回到按按鈕之前的那一頁">↩ 返回</button>
 <div id="overview" hidden><div class="ovbox"><div class="ovhead"><b>跳到哪一頁？</b><span>點縮圖跳過去・按 G 或 Esc 關閉</span></div><div class="ovgrid"></div></div></div>
@@ -2915,6 +2915,46 @@ function growAll(n){
 }
 document.addEventListener('keydown',e=>{if(mode==='present'&&growTimer&&!(e.key==='E'||e.key==='e')){stopGrow()}},true);
 document.addEventListener('pointerdown',()=>{if(mode==='present')stopGrow()},true);
+/* N：逐一導覽。從最淺的一層開始，依大綱順序找下一個「底下還沒展開」的節點，展開它的下一層並放大過去 */
+function revealFrontier(){
+  if(fullSaved||P.cloud||P.slide||!root) return;
+  stopGrow();
+  const canShow=c=>!P.vis.has(c.id)&&!c.morphFrom;
+  const cand=flat.filter(d=>P.vis.has(d.id)&&allKids(d).some(canShow));
+  if(!cand.length){toast('這張圖已經全部展開了');return}
+  const dmin=Math.min(...cand.map(d=>d.depth)), n=cand.find(d=>d.depth===dmin);
+  closeCard(); snap(); P.cycle=false; P.relOn=new Set(); showAnc(n);
+  allKids(n).forEach(c=>{if(canShow(c))P.vis.add(c.id)});
+  relEls.forEach(R=>{if(P.vis.has(R.a.id)&&P.vis.has(R.b.id))P.relShown.add(R.k)});
+  P.focus=n; P.fr=frame([n,...allKids(n).filter(c=>P.vis.has(c.id))]);
+  const i=steps.findIndex(st=>(st.t==='reveal'||st.t==='focus'||st.t==='step')&&st.n===n); if(i>idx) idx=capAtMorph(idx,i);
+  renderP();
+}
+/* Shift+N：由外往中心收一層。每按一次收掉最外圈，畫面跟著往中心拉近，最後只剩母題 */
+function shrinkInward(){
+  if(fullSaved||P.cloud||P.slide||!root) return;
+  stopGrow();
+  const vis=visibleNodes().filter(d=>d!==root);
+  if(!vis.length){toast('已經收到中心了');return}
+  const dmax=Math.max(...vis.map(d=>d.depth));
+  closeCard(); snap(); P.cycle=false; P.relOn=new Set(); P.focus=null;
+  vis.forEach(d=>{if(d.depth===dmax)P.vis.delete(d.id)});
+  const left=visibleNodes();
+  P.fr=frame(left,dmax<=1?2.2:1.2);
+  renderP();
+}
+/* 簡報中：+ − 以畫面中心縮放；C 回到中心主題 */
+function zoomCenter(f){
+  if(P.cloud||P.slide||!root) return;
+  const W=stage.clientWidth,H=stage.clientHeight, ns=clamp(cam.s*f,.12,4);
+  world.classList.add('anim','quick');
+  cam.x=W/2-(W/2-cam.x)*ns/cam.s; cam.y=H/2-(H/2-cam.y)*ns/cam.s; cam.s=ns; applyCam();
+}
+function centerRoot(){
+  if(P.cloud||P.slide||!root) return;
+  closeCard(); P.focus=null; P.relOn=new Set();
+  P.fr=frame([root,...root.children.filter(c=>P.vis.has(c.id))],1.6); renderP();
+}
 function hideBranch(n){
   closeCard(); snap(); P.relOn=new Set();
   subtree(n).slice(1).forEach(d=>P.vis.delete(d.id));
@@ -5376,6 +5416,10 @@ document.addEventListener('keydown',e=>{
     if(['ArrowRight','ArrowDown',' ','PageDown','Enter'].includes(k)){e.preventDefault();nextP()}
     else if(['ArrowLeft','ArrowUp','PageUp','Backspace'].includes(k)){e.preventDefault();prevP()}
     else if(lk==='o'){if(!fullSaved)overviewP()}
+    else if(k==='+'||k==='='){e.preventDefault();zoomCenter(1.3)}
+    else if(k==='-'||k==='_'){e.preventDefault();zoomCenter(1/1.3)}
+    else if(lk==='c'){e.preventDefault();centerRoot()}
+    else if(lk==='n'&&!P.cloud&&!P.slide){e.preventDefault();e.shiftKey?shrinkInward():revealFrontier()}
     else if(lk==='e'&&!P.cloud&&!P.slide){const f=P.focus&&P.vis.has(P.focus.id)?P.focus:null;if(e.shiftKey){if(!stopGrow())growAll(f)}else{stopGrow();revealNext(f)}}
     else if(k==='/'&&P.focus&&!P.cloud&&!P.slide){hideBranch(P.focus)}
     else if(lk==='a') toggleFull();
